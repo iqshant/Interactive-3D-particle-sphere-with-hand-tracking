@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Particle Sphere — Hand Control</title>
+<style>
+  :root{
+    --ink: #08090d;
+    --ink-2: #0e1016;
+    --paper: #e9e6dd;
+    --paper-dim: #8b8a84;
+    --line: rgba(233,230,221,0.14);
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background: radial-gradient(120% 120% at 15% 10%, var(--ink-2) 0%, var(--ink) 60%);
+    overflow:hidden;
+    font-family: "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    color: var(--paper);
+  }
+
+  #video{
+    position:fixed; inset:0; width:100%; height:100%;
+    object-fit:cover; transform:scaleX(-1);
+    opacity:0; transition:opacity .5s ease;
+    filter: brightness(.85) saturate(.85) contrast(1.02);
+    z-index:0;
+  }
+  #video.show{ opacity:1; }
+
+  #vignette{
+    position:fixed; inset:0; z-index:1; pointer-events:none;
+    background: radial-gradient(130% 110% at 50% 45%, transparent 60%, var(--ink) 115%);
+    opacity:0; transition:opacity .5s ease;
+  }
+  #vignette.show{ opacity:1; }
+
+  #webgl{ position:fixed; inset:0; z-index:2; display:block; }
+  #overlay{ position:fixed; inset:0; z-index:3; pointer-events:none; }
+
+  .ui{
+    position:fixed; inset:0; z-index:4; pointer-events:none;
+  }
+  .title-block{
+    position:absolute; top:30px; left:34px;
+  }
+  .eyebrow{
+    font-family: "Helvetica Neue", Arial, sans-serif;
+    font-size:10px; letter-spacing:3.5px; text-transform:uppercase;
+    color: var(--paper-dim); margin:0 0 6px 1px;
+  }
+  h1.title{
+    font-size:27px; font-weight:400; letter-spacing:1.5px;
+    margin:0; color:var(--paper);
+    text-shadow: 0 0 22px rgba(233,230,221,0.12);
+  }
+  .sub{
+    font-family:"Helvetica Neue", Arial, sans-serif;
+    font-size:11.5px; letter-spacing:.4px; line-height:1.6;
+    color: var(--paper-dim); margin-top:10px; max-width:300px;
+  }
+  .sub span{ color: rgba(233,230,221,0.75); }
+
+  .status{
+    position:absolute; left:34px; bottom:28px;
+    font-family:"Helvetica Neue", Arial, sans-serif;
+    font-size:10.5px; letter-spacing:2px; text-transform:uppercase;
+    color: var(--paper-dim);
+    display:flex; gap:16px; align-items:center;
+  }
+  .dot{
+    width:6px; height:6px; border-radius:50%;
+    background: #55524a; transition: background .25s ease, box-shadow .25s ease;
+    display:inline-block; margin-right:7px;
+  }
+  .dot.live{ background: var(--accent, #cbb27a); box-shadow: 0 0 10px var(--accent, #cbb27a); }
+
+  #bgToggle{
+    position:absolute; top:30px; right:34px; pointer-events:auto;
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--paper);
+    font-family:"Helvetica Neue", Arial, sans-serif;
+    font-size:10.5px; letter-spacing:2.2px; text-transform:uppercase;
+    padding:11px 18px;
+    border-radius:2px;
+    cursor:pointer;
+    transition: all .25s ease;
+    backdrop-filter: blur(2px);
+  }
+  #bgToggle:hover{
+    border-color: rgba(233,230,221,0.5);
+    background: rgba(233,230,221,0.06);
+  }
+  #bgToggle.active{
+    background: rgba(233,230,221,0.92);
+    color: var(--ink);
+    border-color: transparent;
+  }
+
+  #permission{
+    position:fixed; inset:0; z-index:10;
+    display:flex; align-items:center; justify-content:center;
+    background: var(--ink);
+  }
+  #permission button{
+    font-family: inherit; font-size:14px; letter-spacing:1px;
+    background: transparent; color: var(--paper);
+    border: 1px solid var(--line); padding: 14px 30px; border-radius:2px;
+    cursor:pointer; transition: all .25s ease;
+  }
+  #permission button:hover{ border-color: rgba(233,230,221,0.5); background: rgba(233,230,221,0.06); }
+  #permission .msg{
+    text-align:center; max-width:420px;
+  }
+  #permission .msg p{
+    font-family:"Helvetica Neue", Arial, sans-serif; font-size:12px;
+    color: var(--paper-dim); letter-spacing:.3px; line-height:1.7; margin:16px 0 26px;
+  }
+  #permission.hide{ display:none; }
+</style>
+</head>
+<body>
+
+<div id="permission">
+  <div class="msg">
+    <div class="eyebrow" style="text-align:center;">Particle Sphere</div>
+    <h1 class="title" style="font-size:22px;">Enable your camera to begin</h1>
+    <p>Your video stays local in this page and is only used to track hand position — nothing is uploaded or recorded.</p>
+    <button id="startBtn">Enable Camera</button>
+  </div>
+</div>
+
+<video id="video" autoplay playsinline muted></video>
+<div id="vignette"></div>
+<canvas id="webgl"></canvas>
+<canvas id="overlay"></canvas>
+
+<div class="ui">
+  <div class="title-block">
+    <div class="eyebrow">Gesture Field · 01</div>
+    <h1 class="title">Particle Sphere</h1>
+    <div class="sub">
+      <span>One hand</span> moves &amp; rotates · <span>two hands</span> spread to scale<br>
+      <span>Pinch &amp; hold</span> to charge, release to scatter · <span>fingers</span> shift the hue
+    </div>
+  </div>
+  <div class="status">
+    <span><span class="dot" id="handDot"></span><span id="handText">no hand</span></span>
+    <span id="fingerText">— fingers</span>
+  </div>
+</div>
+
+<button id="bgToggle">Camera BG</button>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+<script>
+(function(){
+"use strict";
+
+/* ---------------------------------------------------------------------
+   SETUP
+--------------------------------------------------------------------- */
+const video = document.getElementById('video');
+const bgToggle = document.getElementById('bgToggle');
+const vignette = document.getElementById('vignette');
+const permissionEl = document.getElementById('permission');
+const startBtn = document.getElementById('startBtn');
+const handDot = document.getElementById('handDot');
+const handText = document.getElementById('handText');
+const fingerText = document.getElementById('fingerText');
+
+const glCanvas = document.getElementById('webgl');
+const overlay = document.getElementById('overlay');
+const octx = overlay.getContext('2d');
+
+let W = window.innerWidth, H = window.innerHeight;
+
+/* Wire the background toggle immediately, independent of everything else,
+   so it always works even if hand-tracking setup below fails to load. */
+bgToggle.addEventListener('click', () => {
+  const active = video.classList.toggle('show');
+  vignette.classList.toggle('show', active);
+  bgToggle.classList.toggle('active', active);
+  bgToggle.textContent = active ? 'Hide Camera' : 'Camera BG';
+});
+bgToggle.textContent = 'Camera BG';
+
+function resize(){
+  W = window.innerWidth; H = window.innerHeight;
+  overlay.width = W; overlay.height = H;
+  overlay.style.width = W+'px'; overlay.style.height = H+'px';
+  renderer.setSize(W,H);
+  camera.aspect = W/H;
+  camera.updateProjectionMatrix();
+}
+
+/* ---------------------------------------------------------------------
+   THREE.JS SCENE
+--------------------------------------------------------------------- */
+const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias:true, alpha:true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, W/H, 0.1, 100);
+camera.position.set(0,0,14);
+
+const sphereGroup = new THREE.Group();
+scene.add(sphereGroup);
+
+const PARTICLE_COUNT = 3000;
+const RADIUS = 4.2;
+
+// Fibonacci sphere distribution for even coverage
+const originalPositions = new Float32Array(PARTICLE_COUNT*3);
+const currentPositions = new Float32Array(PARTICLE_COUNT*3);
+const directions = new Float32Array(PARTICLE_COUNT*3); // unit direction from center
+const jitter = new Float32Array(PARTICLE_COUNT); // per-particle random factor
+
+const golden = Math.PI * (3 - Math.sqrt(5));
+for(let i=0;i<PARTICLE_COUNT;i++){
+  const y = 1 - (i/(PARTICLE_COUNT-1))*2;
+  const r = Math.sqrt(1-y*y);
+  const theta = golden*i;
+  const x = Math.cos(theta)*r;
+  const z = Math.sin(theta)*r;
+  // slight radius variance so the sphere reads as a volume, not a shell-only line pattern
+  const rad = RADIUS * (0.94 + Math.random()*0.09);
+  originalPositions[i*3]   = x*rad;
+  originalPositions[i*3+1] = y*rad;
+  originalPositions[i*3+2] = z*rad;
+  directions[i*3]   = x;
+  directions[i*3+1] = y;
+  directions[i*3+2] = z;
+  jitter[i] = 0.55 + Math.random()*0.9;
+  currentPositions[i*3]=originalPositions[i*3];
+  currentPositions[i*3+1]=originalPositions[i*3+1];
+  currentPositions[i*3+2]=originalPositions[i*3+2];
+}
+
+const geometry = new THREE.BufferGeometry();
+geometry.setAttribute('position', new THREE.BufferAttribute(currentPositions, 3));
+
+// soft round point texture drawn on a canvas
+function makeDotTexture(){
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const cx = c.getContext('2d');
+  const g = cx.createRadialGradient(32,32,0,32,32,32);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.4, 'rgba(255,255,255,0.7)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  cx.fillStyle = g;
+  cx.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(c);
+}
+
+const material = new THREE.PointsMaterial({
+  size: 0.062,
+  map: makeDotTexture(),
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  color: new THREE.Color('#cbb27a')
+});
+
+const points = new THREE.Points(geometry, material);
+sphereGroup.add(points);
+
+/* color palette keyed by finger count (0 to 5) */
+const PALETTE = [
+  '#8d8a80', // 0 — dim neutral
+  '#59c8ff', // 1 — cool cyan
+  '#63e6a3', // 2 — green
+  '#f2c14e', // 3 — gold
+  '#e97cc0', // 4 — magenta/pink
+  '#ff6a5a'  // 5 — warm red
+];
+let targetColor = new THREE.Color(PALETTE[0]);
+let displayColor = new THREE.Color(PALETTE[0]);
+
+window.addEventListener('resize', resize);
+
+/* ---------------------------------------------------------------------
+   INTERACTION STATE
+--------------------------------------------------------------------- */
+const state = {
+  handsPresent: 0,
+  primaryHand: null,      // normalized {x,y} mirrored, of primary palm center
+  prevPrimaryHand: null,
+  targetPos: new THREE.Vector3(0,0,0),
+  targetScale: 1,
+  fingerCount: 0,
+
+  pinching: false,
+  pinchStart: 0,
+  pinchMidScreen: {x:W/2, y:H/2},
+
+  appPhase: 'idle',       // idle | exploding | reforming
+  phaseStart: 0,
+  explodeTargets: null,
+  frozen: false           // freeze hand-follow of group transform during burst
+};
+
+const CHARGE_TIME = 900;      // ms to fill charge ring
+const EXPLODE_DURATION = 650;
+const REFORM_DURATION = 950;
+const WORLD_SPREAD = 15;      // approx desired world-space explosion radius
+
+function easeOutCubic(t){ return 1 - Math.pow(1-t,3); }
+function easeInOutCubic(t){ return t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; }
+function clamp01(v){ return Math.max(0, Math.min(1, v)); }
+function lerp(a,b,t){ return a+(b-a)*t; }
+
+function triggerExplosion(){
+  state.appPhase = 'exploding';
+  state.phaseStart = performance.now();
+  const scaleAtTrigger = Math.max(sphereGroup.scale.x, 0.001);
+  const targets = new Float32Array(PARTICLE_COUNT*3);
+  for(let i=0;i<PARTICLE_COUNT;i++){
+    const mag = (WORLD_SPREAD / scaleAtTrigger) * jitter[i];
+    targets[i*3]   = originalPositions[i*3]   + directions[i*3]*mag   + (Math.random()-0.5)*2;
+    targets[i*3+1] = originalPositions[i*3+1] + directions[i*3+1]*mag + (Math.random()-0.5)*2;
+    targets[i*3+2] = originalPositions[i*3+2] + directions[i*3+2]*mag + (Math.random()-0.5)*2;
+  }
+  state.explodeTargets = targets;
+}
+
+/* ---------------------------------------------------------------------
+   MEDIAPIPE HANDS
+--------------------------------------------------------------------- */
+let hands = null;
+let handsReady = false;
+try{
+  hands = new Hands({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+  });
+  hands.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.6
+  });
+  hands.onResults(onResults);
+  handsReady = true;
+} catch(err){
+  console.error('MediaPipe Hands failed to initialize:', err);
+  handText.textContent = 'tracking unavailable';
+}
+
+function distance2D(a,b){
+  const dx=a.x-b.x, dy=a.y-b.y;
+  return Math.sqrt(dx*dx+dy*dy);
+}
+
+function countFingers(lm){
+  const handSize = distance2D(lm[0], lm[9]) || 0.001;
+  let count = 0;
+  // four fingers: tip above pip (smaller y) => extended
+  const pairs = [[8,6],[12,10],[16,14],[20,18]];
+  for(const [tip,pip] of pairs){
+    if((lm[pip].y - lm[tip].y) > handSize*0.12) count++;
+  }
+  // thumb: far from pinky base relative to hand size => extended sideways
+  const thumbSpan = distance2D(lm[4], lm[17]);
+  if(thumbSpan > handSize*1.05) count++;
+  return count;
+}
+
+function onResults(results){
+  const list = results.multiHandLandmarks || [];
+  state.handsPresent = list.length;
+
+  if(list.length === 0){
+    state.primaryHand = null;
+    state.prevPrimaryHand = null;
+    state.pinching = false;
+    handDot.classList.remove('live');
+    handText.textContent = 'no hand';
+    fingerText.textContent = '— fingers';
+    octx.clearRect(0,0,W,H);
+    return;
+  }
+
+  handDot.classList.add('live');
+
+  // ---- two-hand scale ----
+  if(list.length === 2){
+    const c0 = list[0][9], c1 = list[1][9];
+    const mx0 = 1-c0.x, mx1 = 1-c1.x;
+    const dx = (mx0-mx1) * (W/H); // rough aspect compensation
+    const dy = (c0.y-c1.y);
+    const dist = Math.sqrt(dx*dx+dy*dy);
+    const target = lerp(0.45, 2.4, clamp01((dist-0.15)/0.65));
+    state.targetScale = target;
+    handText.textContent = 'two hands';
+  } else {
+    handText.textContent = 'one hand';
+  }
+
+  // ---- primary hand: position, rotation, fingers, pinch ----
+  const primary = list[0];
+  const palm = primary[9];
+  const mirroredX = 1 - palm.x;
+  const mirroredY = palm.y;
+  state.prevPrimaryHand = state.primaryHand;
+  state.primaryHand = { x: mirroredX, y: mirroredY };
+
+  state.targetPos.set(
+    (mirroredX - 0.5) * 13,
+    -(mirroredY - 0.5) * 7.5,
+    0
+  );
+
+  const fc = countFingers(primary);
+  state.fingerCount = fc;
+  fingerText.textContent = fc + (fc===1 ? ' finger' : ' fingers');
+  targetColor = new THREE.Color(PALETTE[Math.max(0,Math.min(5,fc))]);
+
+  // pinch: thumb tip (4) vs index tip (8)
+  const thumbTip = primary[4], indexTip = primary[8];
+  const pinchDist = distance2D(thumbTip, indexTip);
+  const wasPinching = state.pinching;
+
+  if(!state.pinching && pinchDist < 0.055){
+    state.pinching = true;
+    state.pinchStart = performance.now();
+  } else if(state.pinching && pinchDist > 0.085){
+    state.pinching = false;
+    const held = performance.now() - state.pinchStart;
+    if(held > 150 && state.appPhase === 'idle'){
+      triggerExplosion();
+    }
+  }
+
+  const midX = 1 - (thumbTip.x+indexTip.x)/2;
+  const midY = (thumbTip.y+indexTip.y)/2;
+  state.pinchMidScreen = { x: midX*W, y: midY*H };
+
+  drawChargeRing();
+}
+
+function drawChargeRing(){
+  octx.clearRect(0,0,W,H);
+  if(!state.pinching) return;
+  const t = clamp01((performance.now()-state.pinchStart)/CHARGE_TIME);
+  const {x,y} = state.pinchMidScreen;
+  const rOuter = 26;
+  octx.save();
+  octx.translate(x,y);
+
+  octx.beginPath();
+  octx.arc(0,0,rOuter,0,Math.PI*2);
+  octx.strokeStyle = 'rgba(233,230,221,0.18)';
+  octx.lineWidth = 2;
+  octx.stroke();
+
+  octx.beginPath();
+  octx.arc(0,0,rOuter, -Math.PI/2, -Math.PI/2 + t*Math.PI*2);
+  octx.strokeStyle = '#'+displayColor.getHexString();
+  octx.lineWidth = 3;
+  octx.lineCap = 'round';
+  octx.shadowColor = '#'+displayColor.getHexString();
+  octx.shadowBlur = 10;
+  octx.stroke();
+
+  octx.beginPath();
+  octx.arc(0,0, 3.5, 0, Math.PI*2);
+  octx.fillStyle = '#'+displayColor.getHexString();
+  octx.shadowBlur = 6;
+  octx.fill();
+
+  octx.restore();
+}
+
+/* feed frames to mediapipe */
+async function detectLoop(){
+  if(handsReady && video.readyState >= 2){
+    try { await hands.send({ image: video }); } catch(e){ /* swallow transient errors */ }
+  }
+  requestAnimationFrame(detectLoop);
+}
+
+/* ---------------------------------------------------------------------
+   MAIN ANIMATION LOOP
+--------------------------------------------------------------------- */
+let idleRotation = 0;
+
+function updateParticles(now){
+  const pos = geometry.attributes.position.array;
+
+  if(state.appPhase === 'exploding'){
+    const t = clamp01((now-state.phaseStart)/EXPLODE_DURATION);
+    const e = easeOutCubic(t);
+    for(let i=0;i<PARTICLE_COUNT;i++){
+      pos[i*3]   = lerp(originalPositions[i*3],   state.explodeTargets[i*3],   e);
+      pos[i*3+1] = lerp(originalPositions[i*3+1], state.explodeTargets[i*3+1], e);
+      pos[i*3+2] = lerp(originalPositions[i*3+2], state.explodeTargets[i*3+2], e);
+    }
+    if(t>=1){ state.appPhase='reforming'; state.phaseStart=now; }
+  } else if(state.appPhase === 'reforming'){
+    const t = clamp01((now-state.phaseStart)/REFORM_DURATION);
+    const e = easeInOutCubic(t);
+    for(let i=0;i<PARTICLE_COUNT;i++){
+      pos[i*3]   = lerp(state.explodeTargets[i*3],   originalPositions[i*3],   e);
+      pos[i*3+1] = lerp(state.explodeTargets[i*3+1], originalPositions[i*3+1], e);
+      pos[i*3+2] = lerp(state.explodeTargets[i*3+2], originalPositions[i*3+2], e);
+    }
+    if(t>=1){ state.appPhase='idle'; }
+  } else {
+    // idle: settle to original positions (in case of float drift)
+    for(let i=0;i<PARTICLE_COUNT;i++){
+      pos[i*3]   = originalPositions[i*3];
+      pos[i*3+1] = originalPositions[i*3+1];
+      pos[i*3+2] = originalPositions[i*3+2];
+    }
+  }
+  geometry.attributes.position.needsUpdate = true;
+}
+
+function updateTransform(dt){
+  const frozen = state.appPhase !== 'idle';
+
+  if(!frozen){
+    if(state.handsPresent > 0){
+      sphereGroup.position.lerp(state.targetPos, 0.09);
+
+      if(state.handsPresent === 1 && state.prevPrimaryHand){
+        const dx = state.primaryHand.x - state.prevPrimaryHand.x;
+        const dy = state.primaryHand.y - state.prevPrimaryHand.y;
+        sphereGroup.rotation.y += dx * 5.5;
+        sphereGroup.rotation.x += dy * 5.5;
+      }
+    } else {
+      // idle ambient drift back toward center + gentle auto-rotate
+      sphereGroup.position.lerp(new THREE.Vector3(0,0,0), 0.02);
+      idleRotation += dt*0.00012;
+      sphereGroup.rotation.y += dt*0.00012;
+    }
+
+    const curScale = sphereGroup.scale.x;
+    const newScale = lerp(curScale, state.targetScale, 0.08);
+    sphereGroup.scale.set(newScale,newScale,newScale);
+  }
+
+  displayColor.lerp(targetColor, 0.06);
+  material.color.copy(displayColor);
+  handDot.style.setProperty('--accent', '#'+displayColor.getHexString());
+}
+
+let lastTime = performance.now();
+function animate(now){
+  const dt = now - lastTime;
+  lastTime = now;
+
+  updateTransform(dt);
+  updateParticles(now);
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+
+/* ---------------------------------------------------------------------
+   UI WIRING
+--------------------------------------------------------------------- */
+startBtn.addEventListener('click', async () => {
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width:640, height:480 } });
+    video.srcObject = stream;
+    await video.play();
+    permissionEl.classList.add('hide');
+    resize();
+    requestAnimationFrame(animate);
+    detectLoop();
+  } catch(err){
+    const msg = permissionEl.querySelector('.msg p');
+    msg.textContent = 'Camera access was denied or unavailable. Please allow camera permissions and reload the page.';
+  }
+});
+
+resize();
+})();
+</script>
+</body>
+</html>
